@@ -10,6 +10,7 @@ import fakeredis
 import mongomock
 import pymongo
 import time
+import sys
 
 import pyop.storage
 
@@ -172,11 +173,10 @@ class TestRedisTTL(StorageTTLTest):
         self.execute_ttl_test("redis://localhost/0", 3600)
 
     def test_missing_module(self):
-        pyop.storage._has_redis = False
-        self.prepare_db("mongodb://localhost/0", None)
+        sys.modules.pop("redis.client")
         with pytest.raises(ImportError):
             self.prepare_db("redis://localhost/0", None)
-        pyop.storage._has_redis = True
+        from redis.client import Redis
 
 
 class TestMongoTTL(StorageTTLTest):
@@ -191,8 +191,7 @@ class TestMongoTTL(StorageTTLTest):
         self.execute_ttl_test("mongodb://localhost/pyop", 3600)
 
     def test_missing_module(self):
-        pyop.storage._has_pymongo = False
-        self.prepare_db("redis://localhost/0", None)
+        sys.modules.pop("pymongo")
         with pytest.raises(ImportError):
             self.prepare_db("mongodb://localhost/0", None)
-        pyop.storage._has_pymongo = True
+        import pymongo

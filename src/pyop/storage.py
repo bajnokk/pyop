@@ -4,21 +4,17 @@ from abc import ABC, abstractmethod
 import copy
 import json
 from datetime import datetime
+import sys
 
 try:
     import pymongo
 except ImportError:
-    _has_pymongo = False
-else:
-    _has_pymongo = True
+    pass
 
 try:
     from redis.client import Redis
 except ImportError:
-    _has_redis = False
-else:
-    _has_redis = True
-
+    pass
 
 class StorageBase(ABC):
     _ttl = None
@@ -64,11 +60,17 @@ class StorageBase(ABC):
     def ttl(self):
         return self._ttl
 
+    def ensure_dependency(self, dependencies):
+        for module in dependencies:
+            if not module in sys.modules:
+                raise ImportError(
+                    f"'{module}' module is required but it is not available"
+                )
+
 
 class MongoWrapper(StorageBase):
     def __init__(self, db_uri, db_name, collection, ttl=None):
-        if not _has_pymongo:
-            raise ImportError("pymongo module is required but it is not available")
+        self.ensure_dependency(["pymongo"])
         self._db_uri = db_uri
         self._coll_name = collection
         self._db = MongoDB(db_uri, db_name=db_name)
@@ -118,11 +120,16 @@ class RedisWrapper(StorageBase):
     Supports JSON-serializable data types.
     """
 
-    def __init__(self, db_uri, collection, ttl=None):
-        if not _has_redis:
-            raise ImportError("redis module is required but it is not available")
-        self._db = Redis.from_url(db_uri, decode_responses=True)
+    def __init__(self, collection, db_uri=None, redis=Redis(), ttl=None):
+        self.ensure_dependency(["redis.client"])
+
         self._collection = collection
+
+        if db_uri is not None:
+            self._db = Redis.from_url(db_uri, decode_responses=True)
+        else:
+            self._db = redis
+
         if ttl is None or (isinstance(ttl, int) and ttl >= 0):
             self._ttl = ttl
         else:
@@ -155,6 +162,10 @@ class RedisWrapper(StorageBase):
     def items(self):
         for key in self._db.keys(self._collection + "*"):
             visible_key = key[len(self._collection) + 1 :]
+
+            if isinstance(visible_key, bytes):
+                visible_key = visible_key.decode()
+
             try:
                 yield (visible_key, self[visible_key])
             except KeyError:
@@ -174,12 +185,13 @@ class MongoDB(object):
 
         self._parsed_uri = pymongo.uri_parser.parse_uri(db_uri)
 
-        db_name = self._parsed_uri.get('database') or db_name
-        if db_name is None:
-            raise ValueError(
-                "Database name must be provided either in the URI or as an argument"
-            )
-        self._database_name = self._parsed_uri['database'] = db_name
+        if self._parsed_uri.get('database') is None:
+            if db_name is None:
+                raise ValueError(
+                    "Database name must be provided either in the URI or as an argument"
+                )
+            self._parsed_uri['database'] = db_name
+        self._database_name = self._parsed_uri['database']
 
         if 'replicaSet' in kwargs and kwargs['replicaSet'] is None:
             del kwargs['replicaSet']
